@@ -1,9 +1,11 @@
-# .github/workflows/build-qpage.yml  (v3)
+# .github/workflows/build-qpage.yml  (v4)
 # ───────────────────────────────────────────────────────────────
 # 하는 일: pdf/ 의 종목별 화면 PDF → PNG 변환 + 최신 외부공개 HTML을 묶어
 #          dist/ 를 만들고 GitHub Pages로 배포한다.
 #
-# 실행 규칙(v3):
+# 실행 규칙(v4):
+#   · 매일 1회 예약 실행(05:23 KST) → 우대법령 오버레이 최신 반영
+#     (Q-Radar가 일 4회 게시하는 pref_export.json 을 배포 시점에 주입)
 #   · q-page-outside_YYYY-MM-DD.html "추가/수정" 커밋 → 본작업 실행
 #   · 감시 파일의 "삭제만" 있는 커밋 → 문지기가 10초 만에 본작업 생략
 #     (깃허브 push 감시는 추가·수정·삭제를 구분하지 못하므로,
@@ -15,6 +17,11 @@
 # 실패 진단(v3): PDF→PNG 변환이 실패해도 Summary 에
 #   변환 결과(실패 파일 목록 포함)를 반드시 출력한 뒤 실패 처리한다.
 #
+# 우대법령 오버레이(v4): tools/pref_inject.py 가 명찰(qpage-master)을 읽어
+#   dist/index.html 에만 pref_law 를 주입한다. 다운로드·검산이 하나라도
+#   실패하면 경고만 남기고 순정본을 그대로 배포한다(규격 v1.4 §3 폴백).
+#   저장소의 원본 HTML 은 어떤 경우에도 수정되지 않는다.
+#
 # 파일 규약: 날짜상 가장 최신 q-page-outside 파일이 index.html 로 배포.
 # 안전장치: q-page-inside* / *내부용*.html 발견 시 배포 강제 중단.
 # 사전 1회 설정: Settings → Pages → Source = "GitHub Actions".
@@ -22,6 +29,8 @@
 name: Build & Deploy Q-Page 자격정보집
 
 on:
+  schedule:
+    - cron: '23 20 * * *'   # 매일 05:23 KST — 우대법령 최신 반영(빌드 전체 재수행)
   workflow_dispatch:
     inputs:
       dpi:
@@ -60,7 +69,7 @@ jobs:
         id: d
         run: |
           if [ "${{ github.event_name }}" != "push" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; echo "수동 실행 → 본작업 진행"; exit 0
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "수동/예약 실행 → 본작업 진행"; exit 0
           fi
           if ! git rev-parse HEAD^ >/dev/null 2>&1; then
             echo "run=true" >> "$GITHUB_OUTPUT"; echo "비교 대상 없음 → 본작업 진행"; exit 0
@@ -160,6 +169,32 @@ jobs:
             du -sh dist dist/sheets 2>/dev/null
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 우대법령 오버레이 주입 (실패 시 순정본 배포)
+        run: |
+          PREF_URL="https://gjtjdwns1008-dev.github.io/hrdk-q-radar/pref_export.json"
+          if curl -fsSL --retry 3 --retry-delay 5 "$PREF_URL" -o pref_export.json; then
+            set +e
+            python tools/pref_inject.py dist/index.html pref_export.json dist/index.overlay.html 2>&1 | tee inject.log
+            RC=${PIPESTATUS[0]}
+            set -e
+            {
+              echo '### 우대법령 오버레이'
+              echo '```'
+              tail -20 inject.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$RC" -eq 0 ]; then
+              mv dist/index.overlay.html dist/index.html
+              echo "오버레이 반영 완료"
+            else
+              rm -f dist/index.overlay.html
+              echo "::warning::오버레이 검산 실패 — 순정본으로 배포합니다(규격 §3 폴백)."
+            fi
+          else
+            echo "::warning::pref_export.json 다운로드 실패 — 순정본으로 배포합니다."
+            echo '### 우대법령 오버레이 — 생략(다운로드 실패)' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: 결과물(dist) 업로드
         uses: actions/upload-pages-artifact@v3

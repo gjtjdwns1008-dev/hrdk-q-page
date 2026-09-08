@@ -2,7 +2,7 @@
 
 국가기술자격 652종목(검정형 545 · 과정평가형 107)의 응시·취득·취업·임금 통계를
 종목당 한 화면으로 제공하는 대국민 채널.
-다이렉트 링크 : <https://gjtjdwns1008-dev.github.io/HRDK-Q-Page/>
+다이렉트 링크 : <https://gjtjdwns1008-dev.github.io/hrdk-q-page/>
 
 ## 구조
 

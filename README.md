@@ -2,7 +2,7 @@
 
 국가기술자격 652종목(검정형 545 · 과정평가형 107)의 응시·취득·취업·임금 통계를
 종목당 한 화면으로 제공하는 대국민 채널.
-다이렉트 링크 : <https://gjtjdwns1008-dev.github.io/hrdk-q-page/>
+다이렉트 링크 : <https://gjtjdwns1008-dev.github.io/HRDK-Q-Page/>
 
 ## 구조
 
@@ -12,15 +12,18 @@ q-page-outside_YYYY-MM-DD.html      외부공개 화면(단일 파일, 자료 �
 pdf/                                종목별 화면 PDF. 파일명 = 종목코드.pdf (외부용 시트 출력물만)
 tools/
   pdf_to_png.py                     pdf/ → PNG 변환기 (pdftoppm+pngquant, 없으면 PyMuPDF 폴백)
+  pref_inject.py                    우대법령 오버레이 주입기 (Q-Radar 게시 JSON → 배포본에만 주입)
 robots.txt                          검색엔진 수집 차단(시범 기간). 공식 전환 때 삭제.
 .github/workflows/
   build-qpage.yml                   배포 지시서: 최신 외부공개본을 홈으로 배포
   keepalive.yml                     월 1회 심장박동(저장소 활동 유지용 커밋)
 ```
 
-## 배포가 도는 시점 (v2)
+## 배포가 도는 시점 (v4)
 
-- `q-page-outside_*.html` 이 올라올 때 **한 번** 돈다. ← 유일한 자동 방아쇠
+- `q-page-outside_*.html` 이 올라올 때 **한 번** 돈다.
+- **매일 05:23(한국시간) 자동 1회** — Q-Radar 가 게시하는 우대법령(pref_export.json)
+  최신본을 홈 화면에 주입해 재배포한다. 주입 검산이 실패하면 순정본 그대로 배포(안전).
 - **pdf/ 업로드는 배포를 일으키지 않는다.** 깃허브 웹은 한 번에 100개까지만
   올라가므로 PDF를 여러 번 나눠 올려도 조용하다. 다 올린 뒤 HTML을 올리면
   그때 한 번만 돌고, HTML 변경 없이 PDF만 갱신했다면 Actions 탭에서

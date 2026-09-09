@@ -803,13 +803,14 @@ function renderDetail(code){
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <b style="font-size:13px;color:var(--navy)">법령 우대 현황</b>
           <span style="font-size:11px;color:var(--muted)">이 자격을 우대·요구하는 법령</span>
-          <a class="btn" style="margin-left:auto;font-size:11.5px;padding:5px 10px" href="https://gjtjdwns1008-dev.github.io/hrdk-q-radar/" target="_blank" rel="noopener">전체 ${x.pref_law.n}건 자세히 보기 ↗</a>
+          <a class="btn" style="margin-left:auto;font-size:11.5px;padding:5px 10px" href="https://gjtjdwns1008-dev.github.io/hrdk-q-radar/#/q/${encodeURIComponent(x.pref_law.src||x.code)}" target="_blank" rel="noopener">전체 ${x.pref_law.n}건 자세히 보기 ↗</a>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px">
           ${[['의무고용','duty'],['직무권한','auth'],['인사우대','hr'],['시험면제','exempt']].map(([lb,k])=>{const v=(x.pref_law.cat||{})[k]||0;return `<span style="font-size:11px;border-radius:4px;padding:3px 8px;background:#F1F3F8;color:var(--navy);${v?'':'opacity:.35'}"><b>${lb}</b> ${v}</span>`;}).join('')}
         </div>
         ${(x.pref_law.top||[]).length?`<div style="margin-top:9px;display:grid;grid-template-columns:1fr 1fr;gap:4px 18px">
           ${x.pref_law.top.map(t=>`<div style="font-size:11.5px;color:var(--ink)">· ${esc(t.law)} <span style="font-size:10px;color:var(--gold);border:1px solid var(--gold);border-radius:3px;padding:1px 5px;margin-left:4px">${esc(t.cat)}</span></div>`).join('')}
+          ${(x.pref_law.n-x.pref_law.top.length)>0?`<div style="font-size:11px;color:var(--muted);align-self:center">그 외 관계법령은 법령 네비게이터 참조</div>`:''}
         </div>`:''}
         <p class="fine" style="text-align:right;margin:8px 0 0;font-size:8.5px;color:var(--muted);opacity:.85;font-family:var(--display)">${esc(x.pref_law.asof)} 기준 · 출처: HRDK Q-Radar(매일 갱신)</p>
       </div>`:''}

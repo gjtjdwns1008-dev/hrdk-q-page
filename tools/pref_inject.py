@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""pref_inject.py — 순정본 Q-Page HTML에 우대법령(pref_law) 오버레이 주입
+"""pref_inject.py — 순정본 Q-Page HTML에 우대법령(pref_law) 오버레이 주입  [v1.1]
 사용: python pref_inject.py <순정본.html> <pref_export.json> <출력.html> [--max-age-days 35]
 
 계약(규격 v1.3.1 §3 + 부속서 A):
   · 명찰(qpage-master)만 읽어 연도·수록 종목을 판정 (화면 파싱 금지)
   · 검산 실패 시 exit 1 — 호출측은 순정본을 그대로 배포(폴백)
   · 주입 범위 = 종목별 "pref_law" 키 하나. 역제거 시 원본과 완전 동일(불변식 자체검증)
-  · 과정평가형(코드 문자 시작)은 동일 종목명의 검정형 데이터 공유 주입"""
+  · 과정평가형(코드 문자 시작)은 **명찰 안에서** 동일 종목명의 검정형 코드를 찾아
+    그 코드의 데이터를 공유 주입하고, 딥링크용으로 그 검정형 코드를 src 로 함께 기록
+    (v1.1: 외부 JSON 의 종목명에 의존하던 매칭을 명찰 내부 매칭으로 전환)"""
 import json, re, sys, datetime
 
 CATS = {'의무고용','직무권한','인사우대','시험면제'}
@@ -35,22 +37,27 @@ def main(html_path, json_path, out_path, max_age=35):
     age = (datetime.date.today() - datetime.date.fromisoformat(asof)).days
     if age > max_age:
         print(f'[경고] asof {asof} — {age}일 경과 (Q-Radar 게시 파이프라인 점검 필요)')
-    byname = {}
     for cd, it in pref['items'].items():
         n, c = it['n'], it['cat']
         if n != c['duty']+c['auth']+c['hr']+c['exempt'] or n <= 0: die(f'{cd} 건수 등식 위반')
         if len(it.get('top', [])) > 3: die(f'{cd} 대표 3건 초과')
         for t in it.get('top', []):
             if t['cat'] not in CATS: die(f'{cd} 성격 표기 위반: {t["cat"]}')
-        byname[it['name']] = it
 
-    # 3) 주입 계획 (명찰 기준)
-    plan, shared, direct = {}, 0, 0
+    # 3) 주입 계획 — 명찰 내부에서 판정(외부 종목명에 의존하지 않음)
+    exam_byname = {}
+    for cd, nm in pitems.items():
+        if cd[:1].isdigit(): exam_byname.setdefault(nm, []).append(cd)
+    plan, srcmap, shared, direct = {}, {}, 0, 0
     for cd, nm in pitems.items():
         if cd in pref['items']:
             plan[cd] = pref['items'][cd]; direct += 1
-        elif not cd[:1].isdigit() and nm in byname:
-            plan[cd] = byname[nm]; shared += 1
+        elif not cd[:1].isdigit():
+            sib = [x for x in exam_byname.get(nm, []) if x in pref['items']]
+            if len(sib) == 1:
+                plan[cd] = pref['items'][sib[0]]; srcmap[cd] = sib[0]; shared += 1
+            elif len(sib) > 1:
+                print(f'[정보] {cd}({nm}) 동명 검정형 {len(sib)}건 — 모호하여 제외')
     unmatched = sorted(set(pref['items']) - set(pitems))
 
     # 4) 문자 수술 주입
@@ -59,6 +66,7 @@ def main(html_path, json_path, out_path, max_age=35):
         anchor = '{"code":"%s",' % cd
         if out.count(anchor) != 1: die(f'주입 앵커 유일성 위반: {cd} ({out.count(anchor)}회)')
         payload = {'n': it['n'], 'cat': it['cat'], 'top': it.get('top', []), 'asof': asof}
+        if cd in srcmap: payload['src'] = srcmap[cd]   # 과정평가형 딥링크용 검정형 코드
         frag = '"pref_law":' + json.dumps(payload, ensure_ascii=False, separators=(',',':')).replace('</','<\\/') + ','
         out = out.replace(anchor, anchor + frag, 1)
         inserted.append((cd, anchor, frag))

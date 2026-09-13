@@ -1,11 +1,13 @@
-# .github/workflows/build-qpage.yml  (v4)
+# .github/workflows/build-qpage.yml  (v4.1)
 # ───────────────────────────────────────────────────────────────
 # 하는 일: pdf/ 의 종목별 화면 PDF → PNG 변환 + 최신 외부공개 HTML을 묶어
 #          dist/ 를 만들고 GitHub Pages로 배포한다.
 #
 # 실행 규칙(v4):
-#   · 매일 1회 예약 실행(05:23 KST) → 우대법령 오버레이 최신 반영
+#   · 매일 1회 예약 실행(09:23 KST) → 우대법령 오버레이 최신 반영
 #     (Q-Radar가 일 4회 게시하는 pref_export.json 을 배포 시점에 주입)
+#     ※ v4.1: 05:23 → 09:23 으로 이동. Q-Radar 당일 첫 게시가 08시경이라
+#       05시에 돌면 늘 전날 스냅샷을 집어왔다(2026-09-13 확인).
 #   · q-page-outside_YYYY-MM-DD.html "추가/수정" 커밋 → 본작업 실행
 #   · 감시 파일의 "삭제만" 있는 커밋 → 문지기가 10초 만에 본작업 생략
 #     (깃허브 push 감시는 추가·수정·삭제를 구분하지 못하므로,
@@ -30,7 +32,7 @@ name: Build & Deploy Q-Page 자격정보집
 
 on:
   schedule:
-    - cron: '23 20 * * *'   # 매일 05:23 KST — 우대법령 최신 반영(빌드 전체 재수행)
+    - cron: '23 0 * * *'    # 매일 09:23 KST(=00:23 UTC) — 우대법령 최신 반영(빌드 전체 재수행)
   workflow_dispatch:
     inputs:
       dpi:

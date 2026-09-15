@@ -17,7 +17,6 @@ pdf/                                종목별 화면 PDF. 파일명 = 종목코�
 tools/
   pdf_to_png.py                     pdf/ → PNG 변환기 (pdftoppm+pngquant, 없으면 PyMuPDF 폴백)
   pref_inject.py                    우대법령 오버레이 주입기 (게시 JSON → 배포본에만 주입)
-robots.txt                          검색엔진 수집 차단(시범 기간). 공식 전환 때 삭제.
 .github/workflows/
   build-qpage.yml                   배포 지시서: 최신 외부공개본을 홈으로 배포
   keepalive.yml                     월 1회 심장박동(저장소 활동 유지용 커밋)

@@ -67,6 +67,7 @@ def radar(sc):
 {grid}<polygon points="{poly}" fill="#1F4E79" fill-opacity=".28" stroke="#1F4E79" stroke-width="1.6"/>
 {''.join(f'<circle cx="{p.split(",")[0]}" cy="{p.split(",")[1]}" r="2.2" fill="#1F4E79"/>' for p in pts)}{lab}</svg>'''
 
+AP='\u2019'   # 연도 라벨용 오른따옴표(3.11 호환: f-string 밖 상수)
 def trend():
     ys=M['years']; A=X['apply']; Q=X['acquire']; P=X.get('p_apply_y') or []
     W,Hh,pad=300,44,16
@@ -79,7 +80,7 @@ def trend():
         return f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.4"/>'+dots
     svg=f"""<svg viewBox="0 0 {W} {Hh}" class="tr">
 {line(A,'#1F4E79')}{line(P,'#70AD47')}{line(Q,'#ED7D31')}
-{''.join(f'<text x="{xy(i,0)[0]:.0f}" y="{Hh-2}" class="ax">\u2019{str(y)[2:]}</text>' for i,y in enumerate(ys))}</svg>"""
+{''.join(f'<text x="{xy(i,0)[0]:.0f}" y="{Hh-2}" class="ax">{AP}{str(y)[2:]}</text>' for i,y in enumerate(ys))}</svg>"""
     return svg
 
 # ───────── Ⅰ 기초정보 ─────────

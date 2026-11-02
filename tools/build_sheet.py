@@ -139,7 +139,7 @@ sec3=f'''<p class="cap">{M["base_year"]}년 시행 결과</p>
 <th class="sp">특이사항 ({M["base_year"]})</th></tr>
 <tr>{''.join(f'<td>{v}</td>' for _,v in res)}<td class="sp"><b>{note}</b><br><span class="sub">면제검정·격년시행·실기단독 해당 여부</span></td></tr></table>
 <div class="two3"><div class="l"><p class="trcap">7개년 추이&nbsp; <span style="color:#1F4E79">&#8213; 응시(필기)</span>&nbsp;<span style="color:#70AD47">&#8213; 응시(실기)</span>&nbsp;<span style="color:#ED7D31">&#8213; 취득</span></p>{trend()}</div><div class="r">
-<table class="tb trt"><tr><th class="rh2">구분</th>{''.join(f"<th>\u2019{str(y)[2:]}</th>" for y in ys)}<th>3개년평균</th><th>순위(등급)</th><th>순위(전체)</th></tr>
+<table class="tb trt"><tr><th class="rh2">구분</th>{''.join(f"<th>{AP}{str(y)[2:]}</th>" for y in ys)}<th>3개년평균</th><th>순위(등급)</th><th>순위(전체)</th></tr>
 {tr_row('응시<br>(필기)',[n(v) for v in X['apply']],n(X['apply_avg3']),X['apply_rank_grade'],X['apply_rank_all'])}
 {tr_row('응시<br>(실기)',[n(v) for v in (X.get('p_apply_y') or ['—']*len(ys))],n(X.get('p_avg3')),X.get('p_rank_grade') or '—',X.get('p_rank_all') or '—')}
 {tr_row('취득<br>(최종)',[n(v) for v in X['acquire']],n(X['acq_avg3']),X.get('acq_rank_grade') or '—',X['acq_rank_all'])}

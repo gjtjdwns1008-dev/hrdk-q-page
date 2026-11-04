@@ -1,4 +1,6 @@
-# .github/workflows/build-qpage.yml  (v5)
+# .github/workflows/build-qpage.yml  (v5.1)
+# v5.1 변경(2026-11): 배포 직전 dist/index.html에 방문자 집계(GoatCounter) 스니펫 주입 —
+#   쿠키·개인식별 없는 비식별 집계, 외부 최신판에만 들어가며 내부용·원장·tools는 무관.
 # v5 변경(2026-11): 종목별 PDF를 더는 업로드하지 않는다 —
 #   배포 때 외부공개 HTML(내장 자료)에서 A3 원페이지 PDF 전 종목을 자동 생성하고
 #   (tools/build_sheet.py 조판 + tools/build_sheets.py 일괄 생성·검산, 약 6분),
@@ -253,6 +255,28 @@ jobs:
             echo "::warning::pref_export.json 다운로드 실패 — 순정본으로 배포합니다."
             echo '### 우대법령 오버레이 — 생략(다운로드 실패)' >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: 방문자 집계 스니펫 주입 (외부 최신판에만 · 쿠키 없는 비식별 집계)
+        run: |
+          python3 - << 'PY'
+          import io
+          p = 'dist/index.html'
+          s = io.open(p, encoding='utf-8').read()
+          SNIP = r"""<script>
+            // Q-PAGE 방문자 집계(GoatCounter) — 쿠키·개인식별 없이 화면(해시) 단위로 기록
+            window.goatcounter = { path: function(){ var h = location.hash.replace(/^#\/?/, ''); return '/' + (h || ''); } };
+            window.addEventListener('hashchange', function(){ if (window.goatcounter.count) window.goatcounter.count(); });
+          </script>
+          <script data-goatcounter="https://hrdk-q-page.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+          """
+          if 'gc.zgo.at' in s:
+              print('집계 스니펫 이미 존재 - 건너뜀')
+          else:
+              assert s.count('</body>') == 1, '</body> 앵커 이상'
+              io.open(p, 'w', encoding='utf-8').write(s.replace('</body>', SNIP + '</body>'))
+              print('집계 스니펫 주입 완료 (dist/index.html)')
+          PY
+          echo '### 방문자 집계 — GoatCounter 스니펫 주입(외부 최신판)' >> "$GITHUB_STEP_SUMMARY"
 
       - name: 결과물(dist) 업로드
         uses: actions/upload-pages-artifact@v3

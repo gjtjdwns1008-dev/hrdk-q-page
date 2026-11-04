@@ -1,6 +1,9 @@
-# .github/workflows/build-qpage.yml  (v5.1)
+# .github/workflows/build-qpage.yml  (v5.4)
 # v5.1 변경(2026-11): 배포 직전 dist/index.html에 방문자 집계(GoatCounter) 스니펫 주입 —
 #   쿠키·개인식별 없는 비식별 집계, 외부 최신판에만 들어가며 내부용·원장·tools는 무관.
+# v5.4 변경(2026-11): /stats(통합 관제판)는 RADAR 저장소가 허브로서 생성·보존하며
+#   (열쇠·일별 원장·생성 워크플로 전부 그쪽), 이 저장소는 그 공개 산출물을 배포 때
+#   '읽기만' 해 /stats로 서빙한다 — 이 저장소에는 시크릿·쓰기권한이 전혀 필요 없다.
 # v5 변경(2026-11): 종목별 PDF를 더는 업로드하지 않는다 —
 #   배포 때 외부공개 HTML(내장 자료)에서 A3 원페이지 PDF 전 종목을 자동 생성하고
 #   (tools/build_sheet.py 조판 + tools/build_sheets.py 일괄 생성·검산, 약 6분),
@@ -277,6 +280,17 @@ jobs:
               print('집계 스니펫 주입 완료 (dist/index.html)')
           PY
           echo '### 방문자 집계 — GoatCounter 스니펫 주입(외부 최신판)' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 방문 통계 관제판 수신 (/stats · RADAR 저장소의 공개 산출물 — 열쇠 불요)
+        run: |
+          mkdir -p dist/stats
+          if curl -fsSL "https://raw.githubusercontent.com/gjtjdwns1008-dev/hrdk-q-radar/main/stats-site/index.html" -o dist/stats/index.html; then
+            echo '### 방문 통계(/stats) — RADAR 허브 산출물 수신' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::관제판 미수신(허브 미가동?) - 준비 중 안내로 배포 계속"
+            printf '<!doctype html><meta charset="utf-8"><title>방문 통계</title><body style="font-family:sans-serif;text-align:center;padding:60px;color:#5A6472">방문 통계 준비 중입니다.</body>' > dist/stats/index.html
+            echo '### 방문 통계(/stats) — 준비 중(허브 미가동)' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: 결과물(dist) 업로드
         uses: actions/upload-pages-artifact@v3

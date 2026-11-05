@@ -6,7 +6,7 @@
    Q-PAGE 배포는 산출물을 읽기만 해 /stats로 서빙 — 시크릿·쓰기권한 불요)
    사용: python tools/build_stats.py <Q-PAGE외부HTML> <출력dir> [--ledger stats-ledger] [--demo]
    env : GOATCOUNTER_TOKEN(필수) · GOATCOUNTER_TOKEN_RADAR(선택) · STATS_SINCE(기본 2026-11-04)"""
-import io, re, json, os, sys, time, urllib.request, urllib.error, datetime
+import io, re, json, os, sys, time, urllib.request, urllib.error, urllib.parse, datetime
 
 SINCE = os.environ.get("STATS_SINCE", "2026-11-04")
 SITES = [
@@ -28,53 +28,63 @@ def pick(d, *keys, default=0):
     return default
 
 def fetch_day(sitecfg, day):
-    """해당 '하루치' 경로별 집계."""
-    hits = api(sitecfg, "/stats/hits?start=%s&end=%s&limit=200" % (day, day))
-    rows = []
-    for h in pick(hits, "hits", "paths", default=[]) or []:
-        rows.append({"path": pick(h, "path", default=""),
-                     "title": pick(h, "title", default=""),
-                     "n": pick(h, "count", "count_unique", "visits", "total")})
-    time.sleep(0.3)   # rate limit 여유
-    return rows
+    """한국시간 하루치(00:00~23:59 KST) 경로별 집계.
+    공식 규격: start/end는 '시간 단위로 끊은 시각', 집계는 양끝 포함(hour >= start AND hour <= end)
+    → 00:00 KST ~ 23:00 KST(마지막 1시간 칸 포함)로 명시. 경로가 많으면 more/exclude_paths로 넘김.
+    반환: (rows, 완결여부) — 미완결이면 원장에 확정하지 않는다."""
+    span = "start=%s&end=%s&limit=100" % (urllib.parse.quote(day + "T00:00:00+09:00"),
+                                         urllib.parse.quote(day + "T23:00:00+09:00"))
+    rows, seen = [], []
+    for _ in range(30):                                   # 안전 상한(100경로×30쪽)
+        q = span + ("&exclude_paths=" + ",".join(seen) if seen else "")
+        res = api(sitecfg, "/stats/hits?" + q)
+        for h in pick(res, "hits", "paths", default=[]) or []:
+            rows.append({"path": pick(h, "path", default=""),
+                         "title": pick(h, "title", default=""),
+                         "n": pick(h, "count", "count_unique", "visits", "total")})
+            if h.get("path_id") is not None: seen.append(str(h["path_id"]))
+        time.sleep(0.3)                                   # 초당 4회 제한 여유
+        if not pick(res, "more", default=False):
+            return rows, True
+    return rows, False
 
 def daterange(a, b):
     d = datetime.date.fromisoformat(a)
     while d <= b:
         yield d.isoformat(); d += datetime.timedelta(days=1)
 
-def collect(sitecfg, today, ledger):
-    """원장 백필(어제까지) + 합산 + 일별 시계열 + 오늘 실시간분."""
-    yday = (datetime.date.fromisoformat(today) - datetime.timedelta(days=1)).isoformat()
+def collect(sitecfg, now, ledger):
+    """확정일은 원장(없으면 받아서 적층), 미확정일(오늘·자정 직후엔 어제까지)은 매번 실시간 수신.
+    확정 기준: 한국시간 자정 후 1시간 유예(늦게 처리되는 집계 대비)가 지난 날만 원장에 굳힌다."""
+    today = now.date()
+    settle = (now - datetime.timedelta(hours=1)).date()   # 이 날짜 '이전'만 확정
     acc = {}; days = []
-    def add(rows, day=None):
-        if day is not None:
-            q = {}
-            for r in rows:
-                m = re.fullmatch(r"/q/([0-9A-Z]{4})", r["path"])
-                if m: q[m.group(1)] = q.get(m.group(1), 0) + r["n"]
-            days.append({"d": day, "n": sum(r["n"] for r in rows), "q": q})
+    def add(rows, day):
+        q = {}
+        for r in rows:
+            m = re.fullmatch(r"/q/([0-9A-Z]{4})", r["path"])
+            if m: q[m.group(1)] = q.get(m.group(1), 0) + r["n"]
+        days.append({"d": day, "n": sum(r["n"] for r in rows), "q": q})
         for r in rows:
             k = r["path"]
             e = acc.setdefault(k, {"path": k, "title": r["title"], "n": 0})
             e["n"] += r["n"]
             if r["title"]: e["title"] = r["title"]
+    ldir = None
     if ledger:
         ldir = os.path.join(ledger, sitecfg["site"]); os.makedirs(ldir, exist_ok=True)
-        new = 0
-        for day in daterange(SINCE, datetime.date.fromisoformat(yday)):
-            fp = os.path.join(ldir, day + ".json")
-            if os.path.exists(fp):
-                add(json.load(io.open(fp, encoding="utf-8")), day)
-            else:
-                rows = fetch_day(sitecfg, day)
-                io.open(fp, "w", encoding="utf-8").write(json.dumps(rows, ensure_ascii=False))
-                add(rows, day); new += 1
-        if new: print("  (%s: 일별 원장 %d일치 적층)" % (sitecfg["label"], new))
-    else:
-        for day in daterange(SINCE, datetime.date.fromisoformat(yday)):
-            add(fetch_day(sitecfg, day), day)
-    add(fetch_day(sitecfg, today), today)   # 오늘 실시간분(확정 원장은 내일 적층)
+    new = 0
+    for day in daterange(SINCE, settle - datetime.timedelta(days=1)):
+        fp = os.path.join(ldir, day + ".json") if ldir else None
+        if fp and os.path.exists(fp):
+            add(json.load(io.open(fp, encoding="utf-8")), day); continue
+        rows, ok = fetch_day(sitecfg, day)
+        if fp and ok:
+            io.open(fp, "w", encoding="utf-8").write(json.dumps(rows, ensure_ascii=False)); new += 1
+        add(rows, day)
+    for day in daterange(settle.isoformat(), today):      # 미확정(실시간)
+        add(fetch_day(sitecfg, day)[0], day)
+    if new: print("  (%s: 일별 원장 %d일치 확정 적층)" % (sitecfg["label"], new))
     return sorted(acc.values(), key=lambda r: -r["n"]), days
 
 def demo(sitecfg):
@@ -114,7 +124,7 @@ def main():
     sites = []
     for sc in SITES:
         try:
-            rows, days = demo(sc) if "--demo" in sys.argv else collect(sc, today, ledger)
+            rows, days = demo(sc) if "--demo" in sys.argv else collect(sc, now, ledger)
             qs = []
             for r in rows:
                 m = re.fullmatch(r"/q/([0-9A-Z]{4})", r["path"])

@@ -1,9 +1,12 @@
-# .github/workflows/build-qpage.yml  (v5.4)
+# .github/workflows/build-qpage.yml  (v6)
 # v5.1 변경(2026-11): 배포 직전 dist/index.html에 방문자 집계(GoatCounter) 스니펫 주입 —
 #   쿠키·개인식별 없는 비식별 집계, 외부 최신판에만 들어가며 내부용·원장·tools는 무관.
-# v5.4 변경(2026-11): /stats(통합 관제판)는 RADAR 저장소가 허브로서 생성·보존하며
-#   (열쇠·일별 원장·생성 워크플로 전부 그쪽), 이 저장소는 그 공개 산출물을 배포 때
-#   '읽기만' 해 /stats로 서빙한다 — 이 저장소에는 시크릿·쓰기권한이 전혀 필요 없다.
+# v6 변경(2026-11): 방문 통계 허브를 이 저장소로 일원화(RADAR 크론 과밀 회피 결정).
+#   열쇠(Secrets GOATCOUNTER_TOKEN)·일별 원장(stats-ledger/)·관제판 생성(tools/build_stats.py
+#   + tools/stats_template.html)이 모두 여기 상주하고, RADAR 쪽 데이터는 집계 장부(API)에서
+#   받아온다(그쪽 저장소는 집계 발신 스니펫 외 무관). 통계를 매시 최신화하기 위해 예약
+#   실행을 '매일 1회 → 매시 5분'으로 변경 — 자료가 그대로인 시간대는 PDF·PNG 캐시가
+#   그대로 재사용되어 회당 수 분이면 끝난다(원장 커밋은 실제 변경이 있는 날 1회뿐).
 # v5 변경(2026-11): 종목별 PDF를 더는 업로드하지 않는다 —
 #   배포 때 외부공개 HTML(내장 자료)에서 A3 원페이지 PDF 전 종목을 자동 생성하고
 #   (tools/build_sheet.py 조판 + tools/build_sheets.py 일괄 생성·검산, 약 6분),
@@ -42,7 +45,7 @@ name: Build & Deploy Q-Page 자격정보집
 
 on:
   schedule:
-    - cron: '23 0 * * *'    # 매일 09:23 KST(=00:23 UTC) — 우대법령 최신 반영(빌드 전체 재수행)
+    - cron: '5 * * * *'          # 매시 5분(KST 기준 매시 14분경 전후 — 깃허브 예약은 수 분 지연 가능)    # 매일 09:23 KST(=00:23 UTC) — 우대법령 최신 반영(빌드 전체 재수행)
   workflow_dispatch:
     inputs:
       dpi:
@@ -59,7 +62,7 @@ on:
       - '.github/workflows/build-qpage.yml'
 
 permissions:
-  contents: read
+  contents: write   # v6: 방문통계 '일별 원장'(stats-ledger/) 적층 커밋에만 사용 — 그 외 쓰기 없음
   pages: write
   id-token: write
 
@@ -281,15 +284,37 @@ jobs:
           PY
           echo '### 방문자 집계 — GoatCounter 스니펫 주입(외부 최신판)' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 방문 통계 관제판 수신 (/stats · RADAR 저장소의 공개 산출물 — 열쇠 불요)
+      - name: 방문 통계 수집·관제판 생성 (/stats · 허브 내장 — 토큰 없으면 건너뜀, 실패해도 배포 계속)
+        env:
+          GOATCOUNTER_TOKEN: ${{ secrets.GOATCOUNTER_TOKEN }}
         run: |
-          mkdir -p dist/stats
-          if curl -fsSL "https://raw.githubusercontent.com/gjtjdwns1008-dev/hrdk-q-radar/main/stats-site/index.html" -o dist/stats/index.html; then
-            echo '### 방문 통계(/stats) — RADAR 허브 산출물 수신' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::warning::관제판 미수신(허브 미가동?) - 준비 중 안내로 배포 계속"
+          if [ -z "$GOATCOUNTER_TOKEN" ]; then
+            echo "GOATCOUNTER_TOKEN 미설정 - /stats 생성 생략"
+            echo '### 방문 통계(/stats) — 건너뜀 (토큰 미설정)' >> "$GITHUB_STEP_SUMMARY"
+            mkdir -p dist/stats
             printf '<!doctype html><meta charset="utf-8"><title>방문 통계</title><body style="font-family:sans-serif;text-align:center;padding:60px;color:#5A6472">방문 통계 준비 중입니다.</body>' > dist/stats/index.html
-            echo '### 방문 통계(/stats) — 준비 중(허브 미가동)' >> "$GITHUB_STEP_SUMMARY"
+          else
+            LATEST=$(ls q-page-outside_*.html 2>/dev/null | sort | tail -1)
+            set +e
+            python tools/build_stats.py "$LATEST" dist/stats --ledger stats-ledger 2>&1 | tee stats.log
+            RC=${PIPESTATUS[0]}
+            set -e
+            # 일별 원장 적층분 커밋(변경 있는 날만 · 이 커밋은 재배포를 일으키지 않음)
+            if [ "$RC" -eq 0 ] && [ -n "$(git status --porcelain stats-ledger 2>/dev/null)" ]; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add stats-ledger
+              git commit -m "chore: 방문통계 일별 원장 적층 [skip ci]"
+              git push
+            fi
+            if [ "$RC" -eq 0 ]; then
+              echo "### 방문 통계(/stats) — $(tail -1 stats.log)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::방문 통계 생성 실패 - /stats 없이 배포 계속 (로그 확인)"
+              echo '### 방문 통계(/stats) — 생성 실패(경고) · 사이트 배포는 정상 진행' >> "$GITHUB_STEP_SUMMARY"
+              mkdir -p dist/stats
+              printf '<!doctype html><meta charset="utf-8"><title>방문 통계</title><body style="font-family:sans-serif;text-align:center;padding:60px;color:#5A6472">방문 통계 준비 중입니다.</body>' > dist/stats/index.html
+            fi
           fi
 
       - name: 결과물(dist) 업로드

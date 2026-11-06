@@ -140,7 +140,9 @@ def main():
         except Exception as e:
             print("  (%s: 집계 미수신 → 대기 표시 · %s)" % (sc["label"], type(e).__name__))
             sites.append(dict(label=sc["label"], desc=sc["desc"], status="wait"))
-    nmap = {c: {"nm": name[c], "et": etyp.get(c, "")} for c in name}
+    info = {i["code"]: i for i in D["items"]}
+    nmap = {c: {"nm": name[c], "et": etyp.get(c, ""), "g": info[c].get("grade", ""),
+                "f": info[c].get("field", ""), "m": info[c].get("midfield", "")} for c in name}
     data = dict(since=SINCE, gen=now.strftime("%Y-%m-%d %H:%M"), sites=sites, nmap=nmap)
     html = _load_page().replace("__DATA__", json.dumps(data, ensure_ascii=False))
     os.makedirs(out, exist_ok=True)

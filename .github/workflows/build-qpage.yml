@@ -1,4 +1,4 @@
-# .github/workflows/build-qpage.yml  (v6)
+# .github/workflows/build-qpage.yml  (v6.1)
 # v5.1 변경(2026-11): 배포 직전 dist/index.html에 방문자 집계(GoatCounter) 스니펫 주입 —
 #   쿠키·개인식별 없는 비식별 집계, 외부 최신판에만 들어가며 내부용·원장·tools는 무관.
 # v6 변경(2026-11): 방문 통계 허브를 이 저장소로 일원화(RADAR 크론 과밀 회피 결정).
@@ -7,6 +7,9 @@
 #   받아온다(그쪽 저장소는 집계 발신 스니펫 외 무관). 통계를 매시 최신화하기 위해 예약
 #   실행을 '매일 1회 → 매시 5분'으로 변경 — 자료가 그대로인 시간대는 PDF·PNG 캐시가
 #   그대로 재사용되어 회당 수 분이면 끝난다(원장 커밋은 실제 변경이 있는 날 1회뿐).
+# v6.1 변경(2026-11-09): 예약이 정각 혼잡대(매시 05분)에 걸려 대부분 건너뛰어지던 문제 해소 —
+#   깃허브 공식 권고대로 정각을 피한 매시 17분·47분 두 번으로 변경. 점검용 PDF 묶음은
+#   새로 구운 실행에서만 보관(같은 묶음 중복 보관 방지). 수집기는 일시 장애 재시도·부분 수신 표시.
 # v5 변경(2026-11): 종목별 PDF를 더는 업로드하지 않는다 —
 #   배포 때 외부공개 HTML(내장 자료)에서 A3 원페이지 PDF 전 종목을 자동 생성하고
 #   (tools/build_sheet.py 조판 + tools/build_sheets.py 일괄 생성·검산, 약 6분),
@@ -45,7 +48,7 @@ name: Build & Deploy Q-Page 자격정보집
 
 on:
   schedule:
-    - cron: '5 * * * *'          # 매시 5분(KST 기준 매시 14분경 전후 — 깃허브 예약은 수 분 지연 가능)    # 매일 09:23 KST(=00:23 UTC) — 우대법령 최신 반영(빌드 전체 재수행)
+    - cron: '17,47 * * * *'    # 매시 17분·47분(한국시간도 동일) — 정각 혼잡대 회피(깃허브 공식 권고), 한 번 빠져도 30분 뒤 재시도
   workflow_dispatch:
     inputs:
       dpi:
@@ -129,6 +132,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils pngquant fonts-noto-cjk
 
       - name: A3 원페이지 PDF 캐시 (자료·도구가 그대로면 재생성 생략)
+        id: a3cache
         uses: actions/cache@v4
         with:
           path: a3pdf
@@ -163,7 +167,8 @@ jobs:
             fi
           fi
 
-      - name: A3 PDF 묶음 보관 (점검용 · 7일 — 필요 없으면 이 단계 삭제)
+      - name: A3 PDF 묶음 보관 (점검용 · 7일 · 새로 구운 날만 — 필요 없으면 이 단계 삭제)
+        if: steps.a3cache.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: a3-onepage-pdf

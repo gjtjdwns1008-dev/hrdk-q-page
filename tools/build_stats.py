@@ -14,13 +14,37 @@ SITES = [
     dict(label="Q-RADAR", desc="우대법령 네비게이터",       site="hrdk-q-radar", tok=["GOATCOUNTER_TOKEN_RADAR", "GOATCOUNTER_TOKEN"]),
 ]
 
+class ApiErr(Exception):
+    """장부 서버 요청 실패(사유 문구 포함)."""
+
 def api(sitecfg, path):
+    """장부 서버 요청. 일시 장애(시간초과·연결끊김·429·5xx)는 최대 3회까지 다시 시도하고,
+    권한·주소 문제(400·401·403·404)는 재시도 없이 사유와 함께 실패를 알린다."""
     tok = next((os.environ[k] for k in sitecfg["tok"] if os.environ.get(k)), None)
-    if not tok: raise RuntimeError("토큰 미설정")
-    req = urllib.request.Request("https://%s.goatcounter.com/api/v0%s" % (sitecfg["site"], path),
-        headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode())
+    if not tok: raise ApiErr("토큰 미설정")
+    url = "https://%s.goatcounter.com/api/v0%s" % (sitecfg["site"], path)
+    last = "알 수 없는 오류"
+    for wait in (0, 3, 8):
+        if wait: time.sleep(wait)
+        req = urllib.request.Request(url, headers={
+            "Authorization": "Bearer " + tok, "Content-Type": "application/json",
+            "User-Agent": "hrdk-q-page-stats/1.1 (+https://github.com/gjtjdwns1008-dev/hrdk-q-page)"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            msg = ""
+            try:
+                j = json.loads(e.read().decode())
+                msg = j.get("error") or (json.dumps(j.get("errors"), ensure_ascii=False) if j.get("errors") else "")
+            except Exception:
+                pass
+            last = "HTTP %d%s" % (e.code, (" " + str(msg)[:90]) if msg else "")
+            if e.code in (400, 401, 403, 404):
+                break
+        except Exception as e:
+            last = type(e).__name__ + ((": " + str(e)[:70]) if str(e) else "")
+    raise ApiErr(last)
 
 def pick(d, *keys, default=0):
     for k in keys:
@@ -73,19 +97,35 @@ def collect(sitecfg, now, ledger):
     ldir = None
     if ledger:
         ldir = os.path.join(ledger, sitecfg["site"]); os.makedirs(ldir, exist_ok=True)
-    new = 0
+    new, broken, miss, live_miss = 0, None, [], []
     for day in daterange(SINCE, settle - datetime.timedelta(days=1)):
         fp = os.path.join(ldir, day + ".json") if ldir else None
         if fp and os.path.exists(fp):
             add(json.load(io.open(fp, encoding="utf-8")), day); continue
-        rows, ok = fetch_day(sitecfg, day)
+        if broken: miss.append(day); continue
+        try:
+            rows, ok = fetch_day(sitecfg, day)
+        except ApiErr as e:
+            broken = str(e); miss.append(day); continue
         if fp and ok:
             io.open(fp, "w", encoding="utf-8").write(json.dumps(rows, ensure_ascii=False)); new += 1
         add(rows, day)
     for day in daterange(settle.isoformat(), today):      # 미확정(실시간)
-        add(fetch_day(sitecfg, day)[0], day)
+        if broken: live_miss.append(day); continue
+        try:
+            add(fetch_day(sitecfg, day)[0], day)
+        except ApiErr as e:
+            broken = str(e); live_miss.append(day)
     if new: print("  (%s: 일별 원장 %d일치 확정 적층)" % (sitecfg["label"], new))
-    return sorted(acc.values(), key=lambda r: -r["n"]), days
+    if broken and not days:
+        raise ApiErr(broken)                               # 보여줄 자료가 하나도 없을 때만 '대기'
+    warn = ""
+    if broken:
+        parts = []
+        if live_miss: parts.append("오늘 실시간분 미반영")
+        if miss: parts.append("미수신 날짜 %s" % ", ".join(d[5:] for d in miss[:6]) + (" 외" if len(miss) > 6 else ""))
+        warn = " · ".join(parts) + " (사유: %s · 다음 실행 때 자동 보충)" % broken
+    return sorted(acc.values(), key=lambda r: -r["n"]), days, warn
 
 def demo(sitecfg):
     import random; random.seed(42 if sitecfg["site"]=="hrdk-q-page" else 7)
@@ -124,7 +164,8 @@ def main():
     sites = []
     for sc in SITES:
         try:
-            rows, days = demo(sc) if "--demo" in sys.argv else collect(sc, now, ledger)
+            res = demo(sc) if "--demo" in sys.argv else collect(sc, now, ledger)
+            rows, days, warn = res[0], res[1], (res[2] if len(res) > 2 else "")
             qs = []
             for r in rows:
                 m = re.fullmatch(r"/q/([0-9A-Z]{4})", r["path"])
@@ -137,9 +178,13 @@ def main():
                               home=sum(r["n"] for r in rows if r["path"] == "/"),
                               qsum=sum(x["n"] for x in qs), qcnt=len(qs),
                               top=qs[:10], days=days))
+            if warn:
+                sites[-1]["warn"] = warn
+                print("  (%s: 부분 수신 — %s)" % (sc["label"], warn))
         except Exception as e:
-            print("  (%s: 집계 미수신 → 대기 표시 · %s)" % (sc["label"], type(e).__name__))
-            sites.append(dict(label=sc["label"], desc=sc["desc"], status="wait"))
+            why = str(e) or type(e).__name__
+            print("  (%s: 집계 미수신 → 대기 표시 · %s)" % (sc["label"], why))
+            sites.append(dict(label=sc["label"], desc=sc["desc"], status="wait", why=why))
     info = {i["code"]: i for i in D["items"]}
     nmap = {c: {"nm": name[c], "et": etyp.get(c, ""), "g": info[c].get("grade", ""),
                 "f": info[c].get("field", ""), "m": info[c].get("midfield", "")} for c in name}
@@ -147,6 +192,9 @@ def main():
     html = _load_page().replace("__DATA__", json.dumps(data, ensure_ascii=False))
     os.makedirs(out, exist_ok=True)
     io.open(os.path.join(out, "index.html"), "w", encoding="utf-8").write(html)
-    print("[방문 통계] %d개 사이트 섹션 → %s/index.html" % (len(data["sites"]), out))
+    st = " · ".join("%s %s" % (x["label"], "정상" if x["status"] == "on" and not x.get("warn")
+                                  else ("부분(" + x["warn"] + ")") if x["status"] == "on" else ("대기(" + x.get("why", "") + ")"))
+                    for x in sites)
+    print("[방문 통계] %s → %s/index.html" % (st, out))
 
 if __name__ == "__main__": main()

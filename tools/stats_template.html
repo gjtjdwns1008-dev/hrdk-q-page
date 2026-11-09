@@ -16,6 +16,9 @@ body{margin:0;background:
 .mast .sub{margin-top:7px;color:#5A6472;font-size:12px;letter-spacing:.05em}
 .live{display:inline-flex;align-items:center;gap:6px;margin-top:9px;font-size:11.5px;color:var(--ink2);border:1px solid #D7E0EC;background:#fff;border-radius:999px;padding:3px 12px}
 .live i{width:7px;height:7px;border-radius:50%;background:#2E8B57;animation:pulse 1.6s ease-out infinite}
+.live.off{color:#9A5B00;border-color:#F1D9A8;background:#FFFBF2;cursor:help}.live.off i{background:#D99A00;animation:none}
+.badge.wn{background:linear-gradient(135deg,#C27C0E,#E0A43A)!important;cursor:help}
+.wnote{margin:8px 0 2px;padding:7px 10px;border-radius:4px;background:#FFF8EC;border:1px solid #F3DDB2;color:#8A5A00;font-size:12px;line-height:1.5}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(46,139,87,.5)}70%{box-shadow:0 0 0 8px rgba(46,139,87,0)}100%{box-shadow:0 0 0 0 rgba(46,139,87,0)}}
 .tabs{display:flex;justify-content:center;gap:8px;margin:18px 0 6px}
 .tab{cursor:pointer;border:1px solid var(--line);background:#fff;padding:9px 22px;font:700 14px/1 "Nanum Myeongjo",serif;color:#5A6472;letter-spacing:.1em;transition:all .25s}
@@ -247,7 +250,7 @@ body.deep .foot{margin-top:22px}
 </style></head><body><div class="wrap">
 <div class="mast"><h1>자격정보 서비스 방문 통계</h1>
 <div class="sub">Q-PAGE · Q-RADAR 통합 관제 · 집계 개시 <b id="since"></b> · 쿠키 없는 비식별 집계 · 일별 원장 자체 보존(전 기간 누적)</div>
-<div class="live"><i></i>오늘 실시간분 포함 · 생성 <span id="gen"></span> KST</div></div>
+<div class="live" id="liveChip"><i></i><span id="liveTx">오늘 실시간분 포함</span> · 생성 <span id="gen"></span> KST</div></div>
 <div class="tabs">
   <div class="tab on" data-p="ov">관측 요약<small>OVERVIEW</small></div>
   <div class="tab" data-p="dp">심층 탐사<small>DEEP DIVE</small></div>
@@ -427,7 +430,9 @@ function renderScope(R){
   if(DP.q.trim())h.push(ck("검색 “"+esc(DP.q.trim())+"”","q"));
   if(DP.g)h.push(ck("등급 "+esc(DP.g),"g"));if(DP.t)h.push(ck("형태 "+etl(DP.t),"t"));if(DP.f)h.push(ck("분야 "+esc(DP.f),"f"));
   document.getElementById("dScope").innerHTML=h.length?"<span>조회 범위</span>"+h.join("")+"<span>· 해당 "+fmt(CODES.filter(pass).length)+"종목의 상세 조회만 집계(홈 조회 제외)</span>"
-    :"<span>조회 범위: 전체 종목 · 홈(목록) 조회 포함</span>";}
+    :"<span>조회 범위: 전체 종목 · 홈(목록) 조회 포함</span>";
+  var wn=ON.filter(function(s){return s.warn&&sitesSel().indexOf(s.label)>=0;});
+  if(wn.length)document.getElementById("dScope").innerHTML+=wn.map(function(s){return '<span class="chip" style="background:#FFF4E5;color:#9A5B00;cursor:help" title="'+esc(s.warn)+'">⚠ '+s.label+' 일부 미반영</span>';}).join("");}
 /* ── 핵심 지표 ── */
 function renderKpi(R){
   var L=R.ds.length,pa=addD(R.a,-L),pb=addD(R.a,-1),dl;
@@ -648,11 +653,11 @@ function renderOV(anim){
   DATA.sites.forEach(function(s){
     var cls=s.label==="Q-RADAR"?"rd":"pg",col=SCOL[s.label]||"#003084",col2=cls==="rd"?"#D9A93A":"#4F7CC9";
     var box=el("div","box sysc "+cls+(A?"":" in"));
-    if(s.status!=="on"){box.innerHTML="<h2>"+s.label+' <span class="desc">'+s.desc+'</span></h2><p class="wait">집계 적용 대기 중</p>';g.appendChild(box);return;}
+    if(s.status!=="on"){box.innerHTML="<h2>"+s.label+' <span class="desc">'+s.desc+'</span></h2><p class="wait">장부를 가져오지 못했어요'+(s.why?'<br><small>사유: '+esc(s.why)+' · 다음 실행 때 다시 시도해요</small>':'')+'</p>';g.appendChild(box);return;}
     var m=DM[s.label]||{},l7s=sumD(s.label,l7a,DMAX),p7s=hasPrev?sumD(s.label,p7a,p7b):null,tot=0,qs=0;
     (s.days||[]).forEach(function(d){tot+=d.n;for(var c in d.q)qs+=d.q[c];});
     var top=(s.top||[]).slice(0,5),mx=Math.max.apply(null,top.map(function(x){return x.n;}).concat([1]));
-    var h="<h2>"+s.label+' <span class="desc">'+s.desc+"</span>"+deltaPill(l7s,p7s)+'<span class="badge'+(cls==="rd"?" rd":"")+'">LIVE</span></h2>'
+    var h="<h2>"+s.label+' <span class="desc">'+s.desc+"</span>"+deltaPill(l7s,p7s)+(s.warn?'<span class="badge wn" title="'+esc(s.warn)+'">일부 미반영</span>':'<span class="badge'+(cls==="rd"?" rd":"")+'">LIVE</span>')+'</h2>'+(s.warn?'<div class="wnote">⚠ '+esc(s.warn)+'</div>':'')
       +'<div class="kpi3"><div><div class="k">누적 방문</div><div class="v">'+ovNum(tot,A)+'<small>회</small></div></div><div><div class="k">최근 7일</div><div class="v">'+ovNum(l7s,A)+'<small>회</small></div></div><div><div class="k">종목 상세 비중</div><div class="v">'+(tot?(qs/tot*100).toFixed(1):"0.0")+"<small>%</small></div></div></div>"
       +'<h3>일별 추이<span class="h3s">최근 '+d30.length+'일</span></h3><div class="dch"></div>'
       +'<h3>최다 조회 TOP 5<span class="h3s">누르면 심층 탐사로</span></h3><table class="t5">'
@@ -730,6 +735,13 @@ document.querySelectorAll(".tab").forEach(function(t){t.addEventListener("click"
 var HM=location.hash.match(/^#deep(?:\/([0-9A-Z]{4}))?$/);if(HM){if(HM[1])DP.sel=HM[1];openTab("dp");}
 document.getElementById("since").textContent=DATA.since;
 document.getElementById("gen").textContent=DATA.gen;
+(function(){var chip=document.getElementById("liveChip"),tx=document.getElementById("liveTx");
+  var g=String(DATA.gen||""),gt=Date.parse(g.replace(" ","T")+":00+09:00"),hrs=isNaN(gt)?0:(Date.now()-gt)/36e5;
+  var bad=DATA.sites.filter(function(s){return s.warn||s.status!=="on";});
+  if(hrs>=3){chip.classList.add("off");tx.textContent="갱신 지연 · "+Math.floor(hrs)+"시간 전 수집";
+    chip.title="깃허브 예약 실행이 밀리면 늦어질 수 있어요. 바로 갱신하려면 Actions → Build & Deploy Q-Page → Run workflow";}
+  else if(bad.length){chip.classList.add("off");tx.textContent=bad.map(function(s){return s.label;}).join("·")+" 일부 미반영";
+    chip.title=bad.map(function(s){return s.label+": "+(s.warn||s.why||"대기");}).join("\n");}})();
 var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){var b=e.target;b.classList.add("in");
   b.querySelectorAll(".num").forEach(function(n){countUp(n,+n.dataset.to);});
   setTimeout(function(){b.querySelectorAll(".bar i,.br i").forEach(function(i){i.style.width=i.dataset.w+"%";});},200);

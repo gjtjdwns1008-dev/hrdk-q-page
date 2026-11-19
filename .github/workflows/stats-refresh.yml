@@ -1,0 +1,200 @@
+# .github/workflows/stats-refresh.yml  (v1)
+# ───────────────────────────────────────────────────────────────
+# 하는 일: 방문 통계(/stats)만 빠르게 갱신하는 전용 작업.
+#   본 작업(build-qpage.yml)과 별개로 돌며, PDF·PNG는 절대 새로 만들지 않는다.
+#
+# 왜 "통계만"인데 사이트 전체를 다시 올리나?
+#   GitHub Pages 배포는 부분 교체가 안 되고 늘 사이트 통째 교체다.
+#   그래서 이 작업도 메인 화면·PNG를 포함한 전체 꾸러미(dist)를 다시 싸는데,
+#   PNG는 본 작업이 저장해 둔 캐시에서 꺼내기만 한다(재생성 없음 → 약 1분).
+#
+# 안전 규칙:
+#   · PNG 캐시가 정확히 일치할 때만 배포한다. 캐시가 없거나(7일 미사용 소멸 등)
+#     자료가 바뀐 직후라 아직 새 캐시가 없으면 → 배포는 건너뛰고
+#     "수집 + 일별 원장 적층"만 한다(사이트는 그대로, 자료 유실 없음).
+#   · 원본 q-page-outside_*.html 이 없으면(교체 공백) 조용히 수집만 하고 끝낸다.
+#   · 본 작업과 같은 줄(concurrency "pages")에 서므로 배포가 겹치지 않는다.
+#   · 두 작업이 같은 날 원장을 동시에 커밋하려다 겹치면 한 번 당겨와(rebase) 재시도,
+#     그래도 안 되면 경고만 남긴다(다음 실행이 같은 내용을 다시 적층).
+#
+# 예약: 매시 9분·39분 — 본 작업(17분·47분)과 엇갈리게 두어
+#   한 시간에 통계 갱신 기회가 최대 4번이 된다(깃허브 예약은 혼잡하면 건너뛰는
+#   '최선 노력' 방식이라 보장은 아니고, 평균 횟수를 늘리는 장치).
+# 수동: Actions 탭 → "방문 통계만 갱신" → Run workflow (1~2분).
+# ───────────────────────────────────────────────────────────────
+name: 방문 통계만 갱신
+
+on:
+  schedule:
+    - cron: '9,39 * * * *'   # 본 작업(17,47분)과 엇갈린 매시 2회 · 정각 혼잡대 회피
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 일별 원장(stats-ledger/) 적층 커밋에만 사용
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"              # 본 작업과 같은 줄에 세워 배포 충돌 방지
+  cancel-in-progress: false
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.mode.outputs.deploy }}
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: PNG 캐시 꺼내오기 (저장은 하지 않음 · 본 작업이 만든 것 재사용)
+        id: sheets
+        uses: actions/cache/restore@v4
+        with:
+          path: dist/sheets
+          key: sheets-200-first-${{ hashFiles('q-page-outside_*.html', 'tools/build_sheet.py', 'tools/build_sheets.py') }}
+
+      - name: 배포 가능 여부 판정 (토큰 + 원본 HTML + 정확한 PNG 캐시가 모두 있을 때만)
+        id: mode
+        env:
+          GOATCOUNTER_TOKEN: ${{ secrets.GOATCOUNTER_TOKEN }}
+        run: |
+          LATEST=$(ls q-page-outside_*.html 2>/dev/null | sort | tail -1)
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          if [ -z "$GOATCOUNTER_TOKEN" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::GOATCOUNTER_TOKEN 미설정 — 이 작업은 할 일이 없습니다."
+            echo '### 건너뜀 — 토큰 미설정' >> "$GITHUB_STEP_SUMMARY"
+          elif [ -z "$LATEST" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::원본 HTML이 없어(교체 공백?) 수집만 하고 배포는 건너뜁니다."
+            echo '### 배포 생략 — 원본 HTML 없음 · 수집만 진행' >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ steps.sheets.outputs.cache-hit }}" != "true" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PNG 캐시가 아직 없어(자료 교체 직후 등) 수집만 하고 배포는 본 작업에 맡깁니다."
+            echo '### 배포 생략 — PNG 캐시 없음 · 수집만 진행 (사이트는 그대로)' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "배포 모드: $LATEST + 캐시 PNG + 새 통계로 전체 꾸러미 재배포"
+          fi
+
+      - name: 방문 통계 수집 · 관제판 생성 · 일별 원장 적층
+        env:
+          GOATCOUNTER_TOKEN: ${{ secrets.GOATCOUNTER_TOKEN }}
+        run: |
+          if [ -z "$GOATCOUNTER_TOKEN" ]; then
+            echo "토큰 미설정 — 수집 생략(판정 단계에서 이미 안내)."
+            exit 0
+          fi
+          SRC="${{ steps.mode.outputs.latest }}"
+          if [ -z "$SRC" ]; then
+            echo "원본 HTML 없음 — 종목 이름표 사전이 그 파일에 들어 있어 수집도 건너뜁니다(다음 회차에 자동 수행)."
+            exit 0
+          fi
+          set +e
+          python tools/build_stats.py "$SRC" dist/stats --ledger stats-ledger 2>&1 | tee stats.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::방문 통계 생성 실패 — 이번 회차는 접습니다(사이트는 그대로, 다음 회차 재시도)."
+            echo '### 통계 생성 실패 — 배포 없음 · 다음 회차 재시도' >> "$GITHUB_STEP_SUMMARY"
+            exit "$RC"
+          fi
+          echo "### 방문 통계 — $(tail -1 stats.log)" >> "$GITHUB_STEP_SUMMARY"
+          # 일별 원장 적층분 커밋(변경 있는 날만 · [skip ci]라 재배포를 일으키지 않음)
+          if [ -n "$(git status --porcelain stats-ledger 2>/dev/null)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add stats-ledger
+            git commit -m "chore: 방문통계 일별 원장 적층 [skip ci]"
+            if ! git push; then
+              echo "다른 작업과 커밋이 겹침 — 당겨와서 1회 재시도"
+              git pull --rebase origin main && git push || \
+                echo "::warning::원장 커밋 겹침으로 이번 적층은 보류 — 다음 실행이 같은 내용을 다시 적층합니다."
+            fi
+          fi
+
+      - name: 사이트 꾸러미 조립 (배포 모드일 때만 · 본 작업과 동일 절차)
+        if: steps.mode.outputs.deploy == 'true'
+        run: |
+          FOUND_INSIDE=$( (ls q-page-inside* 2>/dev/null; ls *내부용*.html 2>/dev/null) | head -5 )
+          if [ -n "$FOUND_INSIDE" ]; then
+            echo "::error::내부용 파일이 저장소에서 발견되었습니다. 즉시 삭제 후 다시 push 하세요."
+            echo "$FOUND_INSIDE"
+            exit 1
+          fi
+          LATEST="${{ steps.mode.outputs.latest }}"
+          cp "$LATEST" dist/index.html
+          [ -f robots.txt ] && cp robots.txt dist/ || true
+          touch dist/.nojekyll
+
+      - name: 우대법령 오버레이 주입 (본 작업과 동일 · 실패 시 순정본)
+        if: steps.mode.outputs.deploy == 'true'
+        run: |
+          PREF_URL="https://gjtjdwns1008-dev.github.io/hrdk-q-radar/pref_export.json"
+          if curl -fsSL --retry 3 --retry-delay 5 "$PREF_URL" -o pref_export.json; then
+            set +e
+            python tools/pref_inject.py dist/index.html pref_export.json dist/index.overlay.html 2>&1 | tee inject.log
+            RC=${PIPESTATUS[0]}
+            set -e
+            if [ "$RC" -eq 0 ]; then
+              mv dist/index.overlay.html dist/index.html
+              echo "오버레이 반영 완료"
+            else
+              rm -f dist/index.overlay.html
+              echo "::warning::오버레이 검산 실패 — 순정본으로 배포합니다(규격 §3 폴백)."
+            fi
+          else
+            echo "::warning::pref_export.json 다운로드 실패 — 순정본으로 배포합니다."
+          fi
+
+      - name: 방문자 집계 스니펫 주입 (본 작업과 동일 · 외부 최신판에만)
+        if: steps.mode.outputs.deploy == 'true'
+        run: |
+          python3 - << 'PY'
+          import io
+          p = 'dist/index.html'
+          s = io.open(p, encoding='utf-8').read()
+          SNIP = r"""<script>
+            // Q-PAGE 방문자 집계(GoatCounter) — 쿠키·개인식별 없이 화면(해시) 단위로 기록
+            window.goatcounter = { path: function(){ var h = location.hash.replace(/^#\/?/, ''); return '/' + (h || ''); } };
+            window.addEventListener('hashchange', function(){ if (window.goatcounter.count) window.goatcounter.count(); });
+          </script>
+          <script data-goatcounter="https://hrdk-q-page.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+          """
+          if 'gc.zgo.at' in s:
+              print('집계 스니펫 이미 존재 - 건너뜀')
+          else:
+              assert s.count('</body>') == 1, '</body> 앵커 이상'
+              io.open(p, 'w', encoding='utf-8').write(s.replace('</body>', SNIP + '</body>'))
+              print('집계 스니펫 주입 완료 (dist/index.html)')
+          PY
+
+      - name: Pages 프로비저닝 확인
+        if: steps.mode.outputs.deploy == 'true'
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: 결과물(dist) 업로드
+        if: steps.mode.outputs.deploy == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: stats
+    if: needs.stats.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: GitHub Pages 배포
+        id: deployment
+        uses: actions/deploy-pages@v4
